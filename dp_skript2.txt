@@ -1,0 +1,1770 @@
+getwd()
+#nahrani datasetu
+fn=read.csv("finito.csv", header = TRUE, dec = ".", sep = ",", stringsAsFactors = FALSE)
+
+fn$STANICE <- as.factor(fn$STANICE)
+fn$N_VYSKA <- as.numeric(fn$N_VYSKA)
+fn$KATEGORIE <- as.factor(fn$KATEGORIE)
+fn$OBLAST <- as.factor(fn$OBLAST)
+fn$LOKALITA <- as.factor(fn$LOKALITA)
+fn$KRAJ <- as.factor(fn$KRAJ)
+fn$REGION <- as.factor(fn$REGION)
+fn$STAT <- as.factor(fn$STAT)
+fn$DATUM <- as.Date(fn$DATUM, format = "%Y-%m-%d")
+fn$HN <- as.numeric(fn$HN)
+fn$SD <- as.numeric(fn$SD)  
+###########################################################################################################
+########################################################################################################
+# Výpočet HN (nově napadlý sníh)
+library(dplyr)
+
+fn <- fn %>%
+  group_by(LOKALITA, STANICE) %>%  # Skupinování podle lokality a stanice
+  mutate(HN = if_else(is.na(HN), SD - lag(SD), HN)) %>%  # Výpočet pouze pro NA hodnoty
+  ungroup()  # Odstranění skupinování pro další operace
+
+fn$HN[fn$HN < 0] <- 0 #zaporne hodnoty nahradi 0          
+#########################################################
+######### vypocet NDS
+petcm=fn %>%
+  filter(SD>5) %>%
+  group_by(LOKALITA) %>%
+  summarise(pocet_dni= n_distinct(DATUM)) #zkouska
+
+##############################################################
+library(lubridate)
+library(dplyr)
+#vypocet NDS (odtud)
+cmzarokycesko=fn %>%
+  filter(HN>5) %>%
+  mutate(rok = year(DATUM))%>%
+  group_by(LOKALITA ,rok) %>%
+  summarise(pocet_dni= n_distinct(DATUM))
+
+
+install.packages("patchwork")
+library(patchwork)
+install.packages("gridExtra")
+library(gridExtra)
+
+
+###############################################################################################
+##################graf - pocet dni se snehem > 5 cm
+# Seznam stanic pod 900 m a nad 900 m
+install.packages("crayon")
+library(crayon)
+library(ggplot2)
+# Seznam stanic pod 900 m a nad 900 m (původní názvy)
+stanice_pod_900 <- c("PecpodSnezkou","Borova_Lada")
+stanice_nad_900 <- c("Labskabouda", "Churanov")
+
+# Přidání kategorie podle nadmořské výšky
+cmzarokycesko <- cmzarokycesko %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(kategorie))  # Odfiltrujeme stanice, které nejsou v seznamu
+
+# Přepsání názvů lokalit na hezčí verzi s diakritikou
+cmzarokycesko$LOKALITA <- recode(cmzarokycesko$LOKALITA,
+                        "PecpodSnezkou" = "Pec pod Sněžkou",
+                        "Labskabouda" = "Labská Bouda",
+                        "Churanov" = "Churáňov",
+                        "Borova_Lada"="Borová Lada"
+)
+
+# Definování barev 
+barvy <- c("Borová Lada" = "#bc80bd", 
+           "Pec pod Sněžkou" = "#6a3d9a", 
+           "Labská Bouda" = "#8da0cb",
+           "Churáňov" = "#d9a779")
+
+# Vytvoření grafu se svislým rozložením
+library(ggplot2)
+ggplot(cmzarokycesko, aes(x = rok, y = pocet_dni, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # **Otočení názvů lokalit**
+    axis.text.x = element_text(angle = 90, hjust = 1), # Rotace letopočtů na ose X
+    legend.position = "none" ,# **Toto odstraní legendu**
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # **Zarovnání názvu na střed**
+  ) +
+  labs(
+    title = "Počet dní se sněhem > 5 cm (Česko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+########### s regresni primkou
+
+ggplot(cmzarokycesko, aes(x = rok, y = pocet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní křivka
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Počet dní s novým sněhem > 5 cm (Česko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+rovnicecz <- cmzarokycesko %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(pocet_dni ~ rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+###########################################################################################################
+#################### norsko NDS 5 ###############################################
+#Seznam stanic pod 900 m a nad 900 m
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(patchwork)
+library(crayon)
+cmzarokynorsko=fn %>%
+  filter(HN>5) %>%
+  mutate(rok = year(DATUM))%>%
+  group_by(LOKALITA ,rok) %>%
+  summarise(pocet_dni= n_distinct(DATUM))
+
+# Seznam stanic pod 900 m a nad 900 m (původní názvy)
+stanice_pod_900 <- c("VesttorpaII", "Drevsjo","Maristova")
+stanice_nad_900 <- c("Venabu", "Fokstugu", "MosstrandII")
+
+# Přidání kategorie podle nadmořské výšky
+cmzarokynorsko <- cmzarokynorsko %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(kategorie))  # Odfiltrujeme stanice, které nejsou v seznamu
+
+# Přepsání názvů lokalit na hezčí verzi s diakritikou
+cmzarokynorsko$LOKALITA <- recode(cmzarokynorsko$LOKALITA,
+"MosstrandII" = "Mosstrand II",
+"VesttorpaII" = "Vest-torpa II",
+"Venabu" = "Venabu",
+"Fokstugu" = "Fokstugu",
+"Drevsjo" = "Drevsjo",
+"Maristova" = "Maristova"
+)
+
+# Definování barev 
+barvy <- c("MosstrandII" = "#1b9e77", 
+           "VesttorpaII" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061")
+
+# Vytvoření grafu se svislým rozložením
+ggplot(cmzarokynorsko, aes(x = rok, y = pocet_dni, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # **Otočení názvů lokalit**
+    axis.text.x = element_text(angle = 90, hjust = 1), # Rotace letopočtů na ose X
+    legend.position = "none" ,# **Toto odstraní legendu**
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # **Zarovnání názvu na střed**
+  ) +
+  labs(
+    title = "Počet dní se sněhem > 5 cm (Norsko)",
+    x = "Rok",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+
+############regresni krivka
+ggplot(cmzarokynorsko, aes(x = rok, y = pocet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní křivka
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Počet dní s novým sněhem > 5 cm (Norsko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+##########################vypocet regresni rovnice
+library(dplyr)
+rovnicenr <- cmzarokynorsko %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(pocet_dni ~ rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+#########################################################################################################
+############################### nds 5 svedsko
+cmzarokysvedsko=fn %>%
+  filter(HN>5) %>%
+  mutate(rok = year(DATUM))%>%
+  group_by(LOKALITA ,rok) %>%
+  summarise(pocet_dni= n_distinct(DATUM))
+# Seznam stanic pod 900 m a nad 900 m (původní názvy)
+stanice_pod_900 <- c("Storlien_Storvallen", "Hoglekardalen","Avasjo_BorgafjallD","Klippen_D","Kiruna","Katterjakk")
+stanice_nad_900 <- c()
+
+# Přidání kategorie podle nadmořské výšky
+cmzarokysvedsko <- cmzarokysvedsko %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(kategorie))  # Odfiltrujeme stanice, které nejsou v seznamu
+
+# Přepsání názvů lokalit na hezčí verzi s diakritikou
+cmzarokysvedsko$LOKALITA <- recode(cmzarokysvedsko$LOKALITA,
+                            "Storlien_Storvallen" = "Storlien Storvallen",
+                            "Hoglekardalen" = "Hoglekardalen",
+                            "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                            "Klippen_D" = "Klippen D",
+                            "Kiruna" = "Kiruna",
+                            "Katterjakk" = "Katterjakk"
+)
+
+# Definování barev 
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Kiruna" = "#d73027", 
+           "Katterjakk" = "#a50026")
+
+# Vytvoření grafu se svislým rozložením
+library(ggplot2)
+ggplot(cmzarokysvedsko, aes(x = rok, y = pocet_dni, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # *Otočení názvů lokalit*
+    axis.text.x = element_text(angle = 90, hjust = 1), # Rotace letopočtů na ose X
+    legend.position = "none" ,# *Toto odstraní legendu*
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # *Zarovnání názvu na střed*
+  ) +
+  labs(
+    title = "Počet dní se sněhem > 5 cm (Švédsko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+####################s regresni krivkou
+
+ggplot(cmzarokysvedsko, aes(x = rok, y = pocet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní křivka
+  scale_fill_manual(values = barvy) +  # Nastavení barev
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Počet dní s novým sněhem > 5 cm (Švédsko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+##################rovnice
+rovnicesd <- cmzarokysvedsko %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(pocet_dni ~ rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+#########################################################################################################
+##########################################################################################################
+################################ SCD ####################################
+library(dplyr)
+install.packages("lubridate")
+library(lubridate)
+install.packages("tidyr")
+library(tidyr)
+#######################################################################
+
+# Funkce pro určení období (Ob1, Ob2, Ob3, Ob4)
+get_obdobi <- function(DATUM, obdobi_type) {
+  mesic <- month(DATUM)
+  rok <- year(DATUM)
+  
+  if (obdobi_type == "ES" && mesic %in% c(11, 12, 1)) {
+    return(paste(rok, rok + 1, "ES (Listopad – Leden)", sep = "/"))
+  } else if (obdobi_type == "WS" && mesic %in% c(12, 1, 2)) {
+    return(paste(rok, rok + 1, "WS (Prosinec – Únor)", sep = "/"))
+  } else if (obdobi_type == "LS" && mesic %in% c(2, 3, 4)) {
+    return(paste(rok, rok + 1, "LS (Únor – Duben)", sep = "/"))
+  } else if (obdobi_type == "FS" && mesic %in% c(11, 12, 1, 2, 3, 4)) {
+    return(paste(rok, rok + 1, "FS (Listopad – Duben)", sep = "/"))
+  } else {
+    return(NA)
+  }
+}
+data=fn
+data <- data %>%
+  mutate(
+    DATUM = as.Date(DATUM, format="%Y-%m-%d"),
+    Rok = year(DATUM),
+    Obdobi = sapply(DATUM, get_obdobi, obdobi_type = "ES")  # Příklad pro Ob1
+  )
+# Funkce pro výpočet jednotlivých období pro oddělené roky
+get_obdobi_for_season <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  # Přidáme sloupec pro rok
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    filter(SD > 5) %>%  # Filtrujeme jen ty řádky, kde je SD větší než 5
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(Počet_dni = n(), .groups = "drop")  # Spočítáme počet dn
+}
+# Výpočet pro jednotlivé sezóny
+#ES_data <- get_obdobi_for_season(data, "ES")
+#WS_data <- get_obdobi_for_season(data, "WS")
+#LS_data <- get_obdobi_for_season(data, "LS")
+FS_data <- get_obdobi_for_season(data, "FS")
+############################################################ odtud zacinam
+# Spojení všech dat do jednoho datasetu
+result <- FS_data
+
+library(ggplot2)
+library(dplyr)
+
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("Borová Lada", "Pec pod Sněžkou")
+stanice_nad_900 <- c("Labská Bouda", "Churáňov")
+
+# Předpokládám, že 'results' je existující datový rámec s názvem "lokality", "roky" a "pocet_dni.x"
+# Přidání kategorie podle nadmořské výšky
+
+result$LOKALITA <- recode(result$LOKALITA,
+                          "Borova_Lada" = "Borová Lada",
+                          "PecpodSnezkou" = "Pec pod Sněžkou",
+                          "Labskabouda" = "Labská Bouda",
+                          "Churanov" = "Churáňov"
+                          
+)
+result <- result %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+#  odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result <- result %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+# filter pro odstranění řádků s NA v 'kategorie'
+result <- result %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+barvy <- c("Borová Lada" = "#bc80bd", 
+           "Pec pod Sněžkou" = "#6a3d9a", 
+           "Labská Bouda" = "#8da0cb",
+           "Churáňov" = "#d9a779")
+##########################################-----WS-----########################################################x
+ggplot(result, aes(x = Rok, y = result$Počet_dni, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),  # Nastavení hodnot na ose Y
+    labels = scales::comma  #  zobrazit čísla s oddělovači pro tisíce
+  ) +  # Vertikální faceting
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Délka trvání sněhové pokrývky pro celkovou sezónu > 5 cm (Česko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+##############s regresni primkou
+
+ggplot(result, aes(x = Rok, y = Počet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní přímka
+  scale_fill_manual(values = barvy) +  # Barvy pro lokality
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),
+    labels = scales::comma
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  ) +
+  labs(
+    title = "Délka trvání sněhové pokrývky pro celkovou sezónu > 5 cm (Česko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+
+rovnicescdcz <- result %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Počet_dni ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+###############################################################################
+###################################### scd norsko ################################
+result <- FS_data
+
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("VesttorpaII", "Drevsjo","Maristova")
+stanice_nad_900 <- c("Venabu", "Fokstugu", "Mosstrand II")
+# Předpokládám, že 'results' je existující datový rámec s názvem "lokality", "roky" a "pocet_dni.x"
+# Přidání kategorie podle nadmořské výšky
+
+result$LOKALITA <- recode(result$LOKALITA,
+                          "MosstrandII" = "Mosstrand II",
+                          "VesttorpaII" = "Vest-torpa II",
+                          "Venabu" = "Venabu",
+                          "Fokstugu" = "Fokstugu",
+                          "Drevsjo" = "Drevsjo",
+                          "Maristova" = "Maristova"
+)
+result <- result %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+#  odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result <- result %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+# filter pro odstranění řádků s NA v 'kategorie'
+result <- result %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+barvy <- c("Mosstrand II" = "#1b9e77", 
+           "Vest-torpa II" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061")
+##########################################----------########################################################x
+library(ggplot2)
+ggplot(result, aes(x = Rok, y = Počet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní přímka
+  scale_fill_manual(values = barvy) +  # Barvy pro lokality
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),
+    labels = scales::comma
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  ) +
+  labs(
+    title = "Délka trvání sněhové pokrývky pro celkovou sezónu > 5 cm (Norsko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+rovnicescdnor <- result %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Počet_dni ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+##############################################################################
+##########################################################################
+##################### scd graf svedsko #################################
+result <- FS_data
+
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("Storlien Storvallen", "Hoglekardalen","Avasjo Borgafjall D","Klippen D","Kiruna","Katterjakk")
+stanice_nad_900 <- c()
+# Předpokládám, že 'results' je existující datový rámec s názvem "lokality", "roky" a "pocet_dni.x"
+# Přidání kategorie podle nadmořské výšky
+
+result$LOKALITA <- recode(result$LOKALITA,
+                          "Storlien_Storvallen" = "Storlien Storvallen",
+                          "Hoglekardalen" = "Hoglekardalen",
+                          "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                          "Klippen_D" = "Klippen D",
+                          "Kiruna" = "Kiruna",
+                          "Katterjakk" = "Katterjakk")      
+result <- result %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+# odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result <- result %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+# filter pro odstranění řádků s NA v 'kategorie'
+result <- result %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Kiruna" = "#d73027", 
+           "Katterjakk" = "#a50026")
+##########################################-----WS-----########################################################x
+ggplot(result, aes(x = Rok, y = Počet_dni)) +
+  geom_bar(aes(fill = LOKALITA), stat = "identity", width = 0.8) +  # Sloupcový graf
+  geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +  # Regresní přímka
+  scale_fill_manual(values = barvy) +  # Barvy pro lokality
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),
+    labels = scales::comma
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  ) +
+  labs(
+    title = "Délka trvání sněhové pokrývky pro celkovou sezónu > 5 cm (Švédsko)",
+    y = "Počet dní",
+    fill = "Lokalita"
+  )
+rovnicescdsved <- result %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Počet_dni ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+##############################################################################
+########################grafy pro HN (vysku nove napadleho snehu)
+get_obdobi_for_season_sum_HN <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  # Přidáme sloupec pro rok
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(Soucet_HN = sum(HN, na.rm = TRUE), .groups = "drop")  # Sečteme hodnoty HN
+}
+
+# Příklad pro období "WS" a "FS"
+library(lubridate)
+WS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "WS")
+FS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "FS")
+
+# Spojení všech dat do jednoho datasetu
+result_sum_HN <- merge(WS_data_sum_HN, FS_data_sum_HN, by = c("LOKALITA", "Rok"), all = TRUE)
+
+
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("VesttorpaII", "Drevsjo","Maristova")
+stanice_nad_900 <- c("Venabu", "Fokstugu", "Mosstrand II")
+# Předpokládám, že 'results' je existující datový rámec s názvem "lokality", "roky" a "pocet_dni.x"
+# Přidání kategorie podle nadmořské výšky
+
+result_sum_HN$LOKALITA <- recode(result_sum_HN$LOKALITA,
+                          "MosstrandII" = "Mosstrand II",
+                          "VesttorpaII" = "Vest-torpa II",
+                          "Venabu" = "Venabu",
+                          "Fokstugu" = "Fokstugu",
+                          "Drevsjo" = "Drevsjo",
+                          "Maristova" = "Maristova"
+)
+result_sum_HN <- result_sum_HN %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+#odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result_sum_HN <- result_sum_HN %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+# filter pro odstranění řádků s NA v 'kategorie'
+result_sum_HN <- result_sum_HN %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+
+install.packages("crayon")
+library(crayon)
+barvy <- c("Mosstrand II" = "#1b9e77", 
+           "Vest-torpa II" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061")
+##########################################-----WS-----########################################################x
+############################################----ws2------#########################################################
+#ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.x, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 400, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  # zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Výška nově napadlého sněhu v zimní sezóně (Norsko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+#############################################----FS2----#################################################xx
+ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.y, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 500, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  # zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Celková výška nově napadlého sněhu za celou sezónu (Norsko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+###############################################################################
+###################### vyska nove napad snehu, ws  a fs svedsko
+get_obdobi_for_season_sum_HN <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  # Přidáme sloupec pro rok
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(Soucet_HN = sum(HN, na.rm = TRUE), .groups = "drop")  # Sečteme hodnoty HN
+}
+
+# Příklad pro období "WS" a "FS"
+WS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "WS")
+FS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "FS")
+
+# Spojení všech dat do jednoho datasetu
+result_sum_HN <- merge(WS_data_sum_HN, FS_data_sum_HN, by = c("LOKALITA", "Rok"), all = TRUE)
+
+
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("Storlien Storvallen", "Hoglekardalen","Avasjo Borgafjall D","Klippen D","Katterjakk")
+stanice_nad_900 <- c()
+#  'results' je existující datový rámec s názvem "lokality", "roky" a "pocet_dni.x"
+# Přidání kategorie podle nadmořské výšky
+
+result_sum_HN$LOKALITA <- recode(result_sum_HN$LOKALITA,
+                                 "Storlien_Storvallen" = "Storlien Storvallen",
+                                 "Hoglekardalen" = "Hoglekardalen",
+                                 "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                                 "Klippen_D" = "Klippen D",
+                                 "Katterjakk" = "Katterjakk")
+
+result_sum_HN <- result_sum_HN %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+# odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result_sum_HN <- result_sum_HN %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+#následně použít filter pro odstranění řádků s NA v 'kategorie'
+result_sum_HN <- result_sum_HN %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+
+install.packages("crayon")
+library(crayon)
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Katterjakk" = "#a50026")
+##########################################-----WS-----########################################################x
+############################################----ws2------#########################################################
+ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.x, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 400, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  #  zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Výška nově napadlého sněhu v zimní sezóně (Švédsko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+#############################################----FS2----#################################################xx
+ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.y, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 500, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  # zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Výška nově napadlého sněhu v celkové sezóně (Švédsko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+#################################################################################
+####################### hn vyska cesko grafy
+get_obdobi_for_season_sum_HN <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  # Přidáme sloupec pro rok
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(Soucet_HN = sum(HN, na.rm = TRUE), .groups = "drop")  # Sečteme hodnoty HN
+}
+
+# Příklad pro období "WS" a "FS"
+WS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "WS")
+FS_data_sum_HN <- get_obdobi_for_season_sum_HN(data, "FS")
+
+# Spojení všech dat do jednoho datasetu
+result_sum_HN <- merge(WS_data_sum_HN, FS_data_sum_HN, by = c("LOKALITA", "Rok"), all = TRUE)
+
+
+# Definice stanic podle nadmořské vysky
+stanice_pod_900 <- c("Karlova Studánka", "Pec pod Sněžkou")
+stanice_nad_900 <- c("Labská Bouda", "Šerák", "Churáňov", "Horská Kvilda")
+
+# Přidání kategorie podle nadmořské výšky
+
+result_sum_HN$LOKALITA <- recode(result_sum_HN$LOKALITA,
+                                 "Karlova_Studanka" = "Karlova Studánka",
+                                 "PecpodSnezkou" = "Pec pod Sněžkou",
+                                 "Labskabouda" = "Labská Bouda",
+                                 "Serak" = "Šerák",
+                                 "Churanov" = "Churáňov",
+                                 "Horska_Kvilda" = "Horská Kvilda")
+
+result_sum_HN <- result_sum_HN %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) # Odfiltrujeme ostatní stanice)) 
+
+# odstranit řádky, které nemají platnou kategorii (pokud je hodnota 'Nezařazeno')
+result_sum_HN <- result_sum_HN %>%
+  filter(kategorie != "Nezařazeno")  # Filtrace pouze platných kategorií
+
+# filter pro odstranění řádků s NA v 'kategorie'
+result_sum_HN <- result_sum_HN %>%
+  filter(!is.na(kategorie))  # Odstraníme řádky, které nemají platnou kategorii
+
+# Definování barev pro jednotlivé stanice
+
+install.packages("crayon")
+library(crayon)
+barvy <- c("Karlova Studánka" = "#bc80bd", 
+           "Pec pod Sněžkou" = "#6a3d9a", 
+           "Labská Bouda" = "#8da0cb",
+           "Šerák" = "#8c510a", 
+           "Churáňov" = "#d9a779", 
+           "Horská Kvilda" = "#543005")
+##########################################-----WS-----########################################################x
+############################################----ws2------#########################################################
+ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.x, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 400, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  # zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Výška nově napadlého sněhu v zimní sezóně (Česko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+#############################################----FS2----#################################################xx
+ggplot(result_sum_HN, aes(x = Rok, y = result_sum_HN$Soucet_HN.y, fill = LOKALITA)) +
+  geom_bar(stat = "identity", width = 0.8) +  # Sloupcový graf, nastavení šířky sloupců
+  scale_fill_manual(values = barvy) +  # Nastavení barev pro lokalitu
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 500, by = 50),  # Nastavení hodnot na ose Y
+    labels = scales::comma  # zobrazit čísla s oddělovači pro tisíce
+  ) +  
+  geom_smooth(method = "lm", aes(group = 1), color = "black", linetype = "solid", size = 0.8) +  # Přidání regresní křivky
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  # Zvýraznění kategorií
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  # Otočení názvů lokalit
+    axis.text.x = element_text(angle = 90, hjust = 1),  # Rotace letopočtů na ose X
+    legend.position = "none",  # Odstranění legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  # Zarovnání názvu na střed
+  ) +
+  labs(
+    title = "Výška nově napadlého sněhu v celkové sezóně (Česko)",
+    y = "Výška nově napadlého sněhu (cm)",
+    fill = "Lokalita"
+  )
+###################################################################################
+##############################################################################################
+##########################################################################################
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(patchwork)
+library(crayon)
+library(lubridate)
+
+install.packages("scales")
+library(scales)
+
+install.packages("ggpmisc")
+library(ggpmisc)  # Balíček pro rovnice regrese
+install.packages("purrr")
+library(purrr)
+
+
+###############česko
+# Funkce pro výpočet váženého průměru a maxima HN
+get_obdobi_for_season_weighted_HN <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(
+      Soucet_HN = sum(HN, na.rm = TRUE),  
+      Pocet_dni = n(),  
+      Pocet_dni_HN_vetsi_5 = sum(HN > 5, na.rm = TRUE),  # Nový výpočet
+      Vazený_prumer_HN = sum(HN, na.rm = TRUE) / Pocet_dni_HN_vetsi_5,  
+      Maximum_HN = max(HN, na.rm = TRUE),  
+      .groups = "drop"
+    )
+}
+# agregovaná data
+FS_data_weighted_HN <- get_obdobi_for_season_weighted_HN(data, "FS")
+
+# Seznamy stanic podle nadmořské výšky
+stanice_pod_900 <- c("Borová Lada", "Pec pod Sněžkou")
+stanice_nad_900 <- c("Labská Bouda", "Churáňov")
+
+# Přemapování názvů lokalit na správné názvy
+FS_data_weighted_HN$LOKALITA <- recode(FS_data_weighted_HN$LOKALITA,
+                                       "Borova_Lada" = "Borová Lada",
+                                       "PecpodSnezkou" = "Pec pod Sněžkou",
+                                       "Labskabouda" = "Labská Bouda",
+                                       "Churanov" = "Churáňov")
+
+# Přidání kategorie podle nadmořské výšky
+FS_data_weighted_HN <- FS_data_weighted_HN %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+
+# Přidání REGION z původních dat
+#FS_data_weighted_HN <- FS_data_weighted_HN %>%
+# left_join(select(data, LOKALITA, REGION), by = "LOKALITA")
+
+# Definování barev pro jednotlivé lokality
+barvy <- c("Borová Lada" = "#bc80bd",
+           "Pec pod Sněžkou" = "#6a3d9a",
+           "Labská Bouda" = "#8da0cb",
+           "Churáňov" = "#d9a779")
+###################################*------grAFHN----###################################xxxx
+
+
+ggplot(FS_data_weighted_HN, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_HN, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_HN, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_HN, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_HN, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_HN), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 100, by = 10),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška HN ve vybraných meteostanicích v ČR",
+    y = "Maximální a průměrná výška HN (cm)",
+    x = "Sezóna"
+  )
+
+###############----vazeny prumerHN
+rovniceczvazenyHN <-FS_data_weighted_HN  %>%######## RovniceNRvazenyHN
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_HN ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+################-----maxim HN
+rovniceczMAXHN <-FS_data_weighted_HN  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_HN ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+###################################################################################################
+##################norsko##########################################################################
+# Spočítáme agregovaná data
+FS_data_weighted_HN_NR <- get_obdobi_for_season_weighted_HN(data, "FS")
+# Definice stanic podle nadmořské výšky
+stanice_pod_900 <- c("VesttorpaII", "Drevsjo","Maristova")
+stanice_nad_900 <- c("Venabu", "Fokstugu", "Mosstrand II")
+
+# Přidání kategorie podle nadmořské výšky
+
+FS_data_weighted_HN_NR$LOKALITA <- recode(FS_data_weighted_HN_NR$LOKALITA,
+                                          "MosstrandII" = "Mosstrand II",
+                                          "VesttorpaII" = "Vest-torpa II",
+                                          "Venabu" = "Venabu",
+                                          "Fokstugu" = "Fokstugu",
+                                          "Drevsjo" = "Drevsjo",
+                                          "Maristova" = "Maristova"
+)
+FS_data_weighted_HN_NR <- FS_data_weighted_HN_NR %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) %>%# Odfiltrujeme ostatní stanice)) 
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+
+
+
+FS_data_weighted_HN_NR <- FS_data_weighted_HN_NR %>%
+  filter(!is.na(Vazený_prumer_HN)) %>%  # Odstranění NA hodnot
+  mutate(
+    Vazený_prumer_HN = ifelse(is.infinite(Vazený_prumer_HN), 0, Vazený_prumer_HN), # Nahrazení Inf nulou
+    Maximum_HN = ifelse(is.infinite(Maximum_HN), 0, Maximum_HN) # Nahrazení Inf nulou i pro Maximum_HN
+  )
+# Přidání REGION z původních dat
+#FS_data_weighted_HN_NR <- FS_data_weighted_HN_NR %>%
+#left_join(select(data, LOKALITA, REGION), by = "LOKALITA")
+
+# Definování barev pro jednotlivé lokality
+barvy <- c("Mosstrand II" = "#1b9e77", 
+           "Vest-torpa II" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061")
+###################################*------grAFHN----###################################xxxx
+ggplot(FS_data_weighted_HN_NR, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X světlejší
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.15) +  
+  # Světlejší pozadí mezi průměrem a maximem (bude teď tmavší)
+  geom_ribbon(aes(ymin = Vazený_prumer_HN, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.1) +  
+  # Čára pro maximální hodnoty - nyní TMAVŠÍ
+  geom_line(aes(y = Maximum_HN, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Čára pro vážený průměr - nyní SVĚTLEJŠÍ
+  geom_line(aes(y = Vazený_prumer_HN, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_HN, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_HN), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 100, by = 10),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška HN ve vybraných meteostanicích v Norsku (cm)",
+    y = "Maximální a průměrná výška HN (cm)",
+    x = "Sezóna"
+  )
+
+
+############
+ggplot(FS_data_weighted_HN_NR, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_HN, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_HN, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_HN, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_HN, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_HN), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 100, by = 10),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška HN ve vybraných meteostanicích v Norsku",
+    y = "Maximální a průměrná výška HN (cm)",
+    x = "Sezóna"
+  )
+
+################-----maxim HN
+rovniceNRMAXHN <- FS_data_weighted_HN_NR %>%
+  filter(!is.na(Maximum_HN) & !is.na(Rok)) %>%  # Odstranění NA
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_HN ~ Rok, data = cur_data())), .groups = "drop") %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+rovniceNRvazenyHN <- FS_data_weighted_HN_NR %>%
+  filter(!is.na(Vazený_prumer_HN), !is.na(Rok), is.finite(Vazený_prumer_HN)) %>%  # Odstranění NA a Inf
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_HN ~ Rok, data = na.omit(cur_data()))), .groups = "drop") %>%  # na.omit() pro jistotu
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+###################################ŠVÉDSKO########################################################
+
+FS_data_weighted_HN_SV <- get_obdobi_for_season_weighted_HN(data, "FS")
+
+# Seznam stanic pod 900 m a nad 900 m (původní názvy)
+stanice_pod_900 <- c("Storlien_Storvallen", "Hoglekardalen","Avasjo_BorgafjallD","Klippen_D","Kiruna","Katterjakk")
+stanice_nad_900 <- c()
+
+# Přidání kategorie podle nadmořské výšky
+FS_data_weighted_HN_SV <- FS_data_weighted_HN_SV %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) %>%# Odfiltrujeme ostatní stanice)) 
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+FS_data_weighted_HN_SV <- FS_data_weighted_HN_SV %>%
+  filter(!is.na(Vazený_prumer_HN)) %>%  # Odstranění NA hodnot
+  mutate(
+    Vazený_prumer_HN = ifelse(is.infinite(Vazený_prumer_HN), 0, Vazený_prumer_HN), # Nahrazení Inf nulou
+    Maximum_HN = ifelse(is.infinite(Maximum_HN), 0, Maximum_HN) # Nahrazení Inf nulou i pro Maximum_HN
+  )
+# Přepsání názvů lokalit na hezčí verzi s diakritikou
+FS_data_weighted_HN_SV$LOKALITA <- recode(FS_data_weighted_HN_SV$LOKALITA,
+                                          "Storlien_Storvallen" = "Storlien Storvallen",
+                                          "Hoglekardalen" = "Hoglekardalen",
+                                          "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                                          "Klippen_D" = "Klippen D",
+                                          "Kiruna" = "Kiruna",
+                                          "Katterjakk" = "Katterjakk"
+)
+
+# Definování barev
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Kiruna" = "#d73027", 
+           "Katterjakk" = "#a50026")
+##############################grad HN-----SVED###################################################
+ggplot(FS_data_weighted_HN_SV, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_HN, ymax = Maximum_HN, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_HN, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_HN, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_HN, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_HN), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 100, by = 10),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška HN ve vybraných meteostanicích ve Švédsku",
+    y = "Maximální a průměrná výška HN (cm)",
+    x = "Sezóna"
+  )
+################-----maxim HN
+rovniceSVMAXHN <- FS_data_weighted_HN_SV %>%
+  filter(!is.na(Maximum_HN) & !is.na(Rok)) %>%  # Odstranění NA
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_HN ~ Rok, data = cur_data())), .groups = "drop") %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+rovniceSVvazenyHN <- FS_data_weighted_HN_SV %>%
+  filter(!is.na(Vazený_prumer_HN), !is.na(Rok), is.finite(Vazený_prumer_HN)) %>%  # Odstranění NA a Inf
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_HN ~ Rok, data = na.omit(cur_data()))), .groups = "drop") %>%  # na.omit() pro jistotu
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+#######################################----SD----################################################
+
+# Funkce pro výpočet váženého průměru a maxima SD
+get_obdobi_for_season_weighted_SD <- function(data, obdobi_type) {
+  data %>%
+    mutate(
+      Datum = as.Date(DATUM, format="%Y-%m-%d"),
+      Rok = year(DATUM),  
+      Obdobi = sapply(Datum, get_obdobi, obdobi_type = obdobi_type)
+    ) %>%
+    filter(!is.na(Obdobi)) %>%
+    group_by(LOKALITA, Rok, Obdobi) %>%
+    summarise(
+      Soucet_SD = sum(SD, na.rm = TRUE),  
+      Pocet_dni = n(),
+      Pocet_dni_SD_vetsi_5 = sum(SD > 5, na.rm = TRUE),  # Nový výpočet
+      Vazený_prumer_SD = sum(SD, na.rm = TRUE) / Pocet_dni,  
+      Maximum_SD = max(SD, na.rm = TRUE),  
+      .groups = "drop"
+    )
+}
+# Spočítáme agregovaná data
+FS_data_weighted_SD <- get_obdobi_for_season_weighted_SD(data, "FS")
+
+# Seznamy stanic podle nadmořské výšky
+stanice_pod_900 <- c("Borová Lada", "Pec pod Sněžkou")
+stanice_nad_900 <- c("Labská Bouda", "Churáňov")
+
+# Přemapování názvů lokalit na správné názvy
+FS_data_weighted_SD$LOKALITA <- recode(FS_data_weighted_SD$LOKALITA,
+                                       "Borova_Lada" = "Borová Lada",
+                                       "PecpodSnezkou" = "Pec pod Sněžkou",
+                                       "Labskabouda" = "Labská Bouda",
+                                       "Churanov" = "Churáňov")
+
+# Přidání kategorie podle nadmořské výšky
+FS_data_weighted_SD <- FS_data_weighted_SD %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+
+# Přidání REGION z původních dat
+FS_data_weighted_SD <- FS_data_weighted_SD %>%
+  left_join(select(data, LOKALITA, REGION), by = "LOKALITA")
+
+# Definování barev pro jednotlivé lokality
+barvy <- c("Borová Lada" = "#bc80bd",
+           "Pec pod Sněžkou" = "#6a3d9a",
+           "Labská Bouda" = "#8da0cb",
+           "Churáňov" = "#d9a779")
+###################################*------grAFSD----###################################xxxx
+
+ggplot(FS_data_weighted_SD, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_SD, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_SD, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_SD, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_SD, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_SD), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška sněhu ve vybraných meteostanicích v ČR",
+    y = "Maximální a průměrná výška sněhu (cm)",
+    x = "Sezóna"
+  )
+###############----vazeny prumerSD
+rovniceczvazeny_SD <-FS_data_weighted_SD  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+################-----maxim SD
+rovniceczMAXSD <-FS_data_weighted_SD  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+#############################SD norsko ##########################################################################
+#xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx#
+#################################################################################################################
+
+FS_data_weighted_SD_NR <- get_obdobi_for_season_weighted_SD(data, "FS")
+
+stanice_pod_900 <- c("VesttorpaII", "Drevsjo","Maristova")
+stanice_nad_900 <- c("Venabu", "Fokstugu", "Mosstrand II")
+
+# Přidání kategorie podle nadmořské výšky
+
+FS_data_weighted_SD_NR$LOKALITA <- recode(FS_data_weighted_SD_NR$LOKALITA,
+                                          "MosstrandII" = "Mosstrand II",
+                                          "VesttorpaII" = "Vest-torpa II",
+                                          "Venabu" = "Venabu",
+                                          "Fokstugu" = "Fokstugu",
+                                          "Drevsjo" = "Drevsjo",
+                                          "Maristova" = "Maristova"
+)
+FS_data_weighted_SD_NR <- FS_data_weighted_SD_NR %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) %>%# Odfiltrujeme ostatní stanice)) 
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+FS_data_weighted_SD_NR <- FS_data_weighted_SD_NR %>%
+  filter(!is.na(Vazený_prumer_SD))  # Odstranění NA hodnot v průměru
+FS_data_weighted_SD_NR <- FS_data_weighted_SD_NR %>%
+  filter(!is.na(Vazený_prumer_SD)) %>%  # Odstranění NA hodnot
+  mutate(
+    Vazený_prumer_SD = ifelse(is.infinite(Vazený_prumer_SD), 0, Vazený_prumer_SD), # Nahrazení Inf nulou
+    Maximum_SD = ifelse(is.infinite(Maximum_SD), 0, Maximum_SD) # Nahrazení Inf nulou i pro Maximum_HN
+  )
+
+# Přidání REGION z původních dat
+#FS_data_weighted_HN_NR <- FS_data_weighted_HN_NR %>%
+#left_join(select(data, LOKALITA, REGION), by = "LOKALITA")
+
+# Definování barev pro jednotlivé lokality
+barvy <- c("Mosstrand II" = "#1b9e77", 
+           "Vest-torpa II" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061")
+
+
+#########################graf
+ggplot(FS_data_weighted_SD_NR, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_SD, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_SD, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_SD, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_SD, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_SD), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška sněhu ve vybraných meteostanicích v Norsku",
+    y = "Maximální a průměrná výška sněhu (cm)",
+    x = "Sezóna"
+  )
+
+
+FS_data_weighted_SD_NR <- FS_data_weighted_SD_NR %>%
+  filter(!is.na(Vazený_prumer_SD)) %>%  # Odstranění NA hodnot
+  mutate(
+    Vazený_prumer_SD = ifelse(is.infinite(Vazený_prumer_SD), 0, Vazený_prumer_SD), # Nahrazení Inf nulou
+    Maximum_SD = ifelse(is.infinite(Maximum_SD), 0, Maximum_SD) # Nahrazení Inf nulou i pro Maximum_HN
+  )
+
+
+###############rovnice norsko
+#vazeny prumerSD
+rovniceNRvazeny_SD <-FS_data_weighted_SD_NR  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+################-----maxim SD
+rovniceNRMAXSD <-FS_data_weighted_SD_NR  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+
+##############################################__________________svedsko_____SD______################################
+FS_data_weighted_SD_SV <- get_obdobi_for_season_weighted_SD(data, "FS")
+
+# Seznam stanic pod 900 m a nad 900 m (původní názvy)
+stanice_pod_900 <- c("Storlien_Storvallen", "Hoglekardalen","Avasjo_BorgafjallD","Klippen_D","Kiruna","Katterjakk")
+stanice_nad_900 <- c()
+
+# Přidání kategorie podle nadmořské výšky
+FS_data_weighted_SD_SV <- FS_data_weighted_SD_SV %>%
+  mutate(kategorie = case_when(
+    LOKALITA %in% stanice_pod_900 ~ "Stanice < 900m",
+    LOKALITA %in% stanice_nad_900 ~ "Stanice > 900m",
+    TRUE ~ NA_character_ )) %>%# Odfiltrujeme ostatní stanice)) 
+  filter(!is.na(kategorie))  # Odstraníme nezařazené řádky
+FS_data_weighted_HN_SV <- FS_data_weighted_HN_SV %>%
+  filter(!is.na(Vazený_prumer_HN)) %>%  # Odstranění NA hodnot
+  mutate(
+    Vazený_prumer_HN = ifelse(is.infinite(Vazený_prumer_HN), 0, Vazený_prumer_HN), # Nahrazení Inf nulou
+    Maximum_HN = ifelse(is.infinite(Maximum_HN), 0, Maximum_HN) # Nahrazení Inf nulou i pro Maximum_HN
+  )
+# Přepsání názvů lokalit na hezčí verzi s diakritikou
+FS_data_weighted_SD_SV$LOKALITA <- recode(FS_data_weighted_SD_SV$LOKALITA,
+                                          "Storlien_Storvallen" = "Storlien Storvallen",
+                                          "Hoglekardalen" = "Hoglekardalen",
+                                          "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                                          "Klippen_D" = "Klippen D",
+                                          "Kiruna" = "Kiruna",
+                                          "Katterjakk" = "Katterjakk"
+)
+
+# Definování barev 
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Kiruna" = "#d73027", 
+           "Katterjakk" = "#a50026")
+###############################################################################
+ggplot(FS_data_weighted_SD_SV, aes(x = Rok)) +
+  # Vyplnění pod maximální hodnotou až k ose X tmavě modrou
+  geom_ribbon(aes(ymin = 0, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.1) +  
+  # Světlejší pozadí mezi průměrem a maximem
+  geom_ribbon(aes(ymin = Vazený_prumer_SD, ymax = Maximum_SD, fill = LOKALITA), alpha = 0.15) +  
+  # Čára pro maximální hodnoty - světlejší odstín
+  geom_line(aes(y = Maximum_SD, color = LOKALITA), linewidth = 0.8, linetype = "solid", alpha = 0.6) +
+  # Čára pro vážený průměr - tmavší odstín
+  geom_line(aes(y = Vazený_prumer_SD, color = LOKALITA), linewidth = 1.2, linetype = "solid", alpha = 1) +
+  # Regresní přímky pro Maximum_HN a Vazený_prumer_HN (barvy podle lokalit)
+  geom_smooth(aes(y = Maximum_SD, color = LOKALITA), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1) +
+  geom_smooth(aes(y = Vazený_prumer_SD), method = "lm", linetype = "dashed", se = FALSE, linewidth = 1, color = "black") +
+  # Nastavení barev
+  scale_fill_manual(values = barvy) +  
+  scale_color_manual(values = barvy) +  
+  # Rozdělení podle lokality a kategorie
+  facet_grid(LOKALITA ~ kategorie, scales = "free_y", space = "free_y") +
+  scale_y_continuous(
+    breaks = seq(0, 300, by = 20),  
+    labels = comma  
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text.x = element_text(size = 8, face = "bold"),  
+    strip.text.y = element_text(size = 8, face = "bold", angle = 0),  
+    axis.text.x = element_text(angle = 90, hjust = 1),  
+    legend.position = "none",  # Skrytí legendy
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)  
+  ) +
+  labs(
+    title = "Maximální a průměrná výška sněhu ve vybraných meteostanicích Švédska",
+    y = "Maximální a průměrná výška sněhu (cm)",
+    x = "Sezóna"
+  )
+###############----vazeny prumerSD
+rovniceSVvazeny_SD <-FS_data_weighted_SD_SV  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Vazený_prumer_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+################-----maxim SD
+rovniceSVMAXSD <-FS_data_weighted_SD_SV  %>%
+  group_by(LOKALITA) %>%
+  summarise(model = list(lm(Maximum_SD ~ Rok, data = cur_data()))) %>%
+  mutate(eq = purrr::map(model, ~{
+    coef <- coef(.x)
+    paste0("y = ", round(coef[1], 2), " + ", round(coef[2], 4), " * x")
+  })) %>%
+  select(LOKALITA, eq)
+######################################################################################################
+############################ TEPLOTA #########################
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(patchwork)
+library(crayon)
+library(lubridate)
+install.packages("trend")
+library(trend)
+library(tidyr)
+#install.packages(drop)
+fn$LOKALITA <- recode(fn$LOKALITA,
+                       "Storlien_Storvallen" = "Storlien Storvallen",
+                       "Hoglekardalen" = "Hoglekardalen",
+                       "Avasjo_BorgafjallD" = "Avasjo Borgafjall D",
+                       "Klippen_D" = "Klippen D",
+                       "Kiruna" = "Kiruna",
+                       "Katterjakk" = "Katterjakk",
+                       "MosstrandII" = "Mosstrand II",
+                       "VesttorpaII" = "Vest-torpa II",
+                       "Venabu" = "Venabu",
+                       "Fokstugu" = "Fokstugu",
+                       "Drevsjo" = "Drevsjo",
+                       "Maristova" = "Maristova",
+                       "PecpodSnezkou" = "Pec pod Sněžkou",
+                       "Labskabouda" = "Labská Bouda",
+                       "Churanov" = "Churáňov",
+                       "Borova_Lada"="Borová Lada")
+
+# Definování barev 
+barvy <- c("Storlien Storvallen" = "#e7298a", 
+           "Hoglekardalen" = "#d95f02", 
+           "Avasjo Borgafjall D" = "#e69f00",
+           "Klippen D" = "#fdae61", 
+           "Kiruna" = "#d73027", 
+           "Katterjakk" = "#a50026",
+           "Mosstrand II" = "#1b9e77", 
+           "Vest-torpa II" = "#33a02c", 
+           "Venabu" = "#66c2a5",
+           "Drevsjo" = "#2c7fb8", 
+           "Maristova" = "#4575b4", 
+           "Fokstugu" = "#053061",  # <-- Chyběla čárka zde
+           "Borová Lada" = "#bc80bd", 
+           "Pec pod Sněžkou" = "#6a3d9a", 
+           "Labská Bouda" = "#8da0cb",
+           "Churáňov" = "#d9a779")
+
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+# Přejmenování států
+df_yearly <- fn %>%
+  mutate(
+    year = year(DATUM),
+    STAT = recode(STAT, 
+                  "CR" = "Česko", 
+                  "Svedsko" = "Švédsko", 
+                  "Norsko" = "Norsko")  # Překlad zkratek států
+  ) %>%
+  group_by(year, LOKALITA, STAT) %>%
+  summarise(AT_avgm = mean(AT_avg, na.rm = TRUE), .groups = "drop") %>%  
+  drop_na(AT_avgm) %>%  
+  filter(AT_avgm >= -5, AT_avgm < 7.5)  # Odstranění extrémních hodnot
+
+# Rozdělení podle států
+df_CZ <- df_yearly %>% filter(STAT == "Česko")
+df_SE <- df_yearly %>% filter(STAT == "Švédsko")
+df_NO <- df_yearly %>% filter(STAT == "Norsko")
+
+# Graf pro Česko
+plot_CZ <- ggplot(df_CZ, aes(x = year, y = AT_avgm, color = LOKALITA)) +
+  geom_line() +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +  
+  theme_minimal() +
+  scale_color_manual(values = barvy) +
+  labs(title = "Vývoj průměrné teploty vzduchu ve vybraných meteostanicích v ČR",
+       x = "Rok",
+       y = "Průměrná teplota vzduchu",
+       color = "Lokalita")
+
+# Graf pro Švédsko
+plot_SE <- ggplot(df_SE, aes(x = year, y = AT_avgm, color = LOKALITA)) +
+  geom_line() +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +  
+  theme_minimal() +
+  scale_color_manual(values = barvy) +
+  labs(title = "Vývoj průměrné teploty vzduchu ve vybraných meteostanicích ve Švédsku",
+       x = "Rok",
+       y = "Průměrná teplota vzduchu",
+       color = "Lokalita")
+
+# Graf pro Norsko
+plot_NO <- ggplot(df_NO, aes(x = year, y = AT_avgm, color = LOKALITA)) +
+  geom_line() +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +  
+  theme_minimal() +
+  scale_color_manual(values = barvy) +
+  labs(title = "Vývoj průměrné teploty vzduchu ve vybraných meteostanicích v Norsku",
+       x = "Rok",
+       y = "Průměrná teplota vzduchu",
+       color = "Lokalita")
+
+# Zobrazení grafů
+plot_CZ
+plot_SE
+plot_NO
+get_regression_equation <- function(df) {
+  model <- lm(AT_avgm ~ year, data = df)  # Lineární regrese
+  a <- round(coef(model)[2], 4)  # Sklon přímky
+  b <- round(coef(model)[1], 4)  # Absolutní člen
+  eq <- paste0("y = ", a, "x + ", b)
+  return(eq)
+}
+
+
+get_regression_equation2 <- function(df) {
+  model <- lm(AT_avgm ~ year, data = df)
+  a <- round(coef(model)[1], 4)  # Absolutní člen
+  b <- round(coef(model)[2], 4)  # Sklon (směrnice)
+  
+  sign_b <- ifelse(b < 0, " - ", " + ")
+  eq <- paste0("y = ", a, sign_b, abs(b), " * x")
+  return(eq)
+}
+# Výpočet rovnic pro každou lokalitu podle státu
+regression_results <- df_yearly %>%
+  group_by(STAT, LOKALITA) %>%
+  summarise(Rovnice = get_regression_equation(cur_data()), .groups = "drop")
+
+# Zobrazení výsledků
+print(regression_results)
+
+
+# Výpočet rovnic pro každou lokalitu podle státu
+regression_results2 <- df_yearly %>%
+  group_by(STAT, LOKALITA) %>%
+  summarise(Rovnice = get_regression_equation2(cur_data()), .groups = "drop")
+
+# Zobrazení výsledků
+print(regression_results2)
+
+# Funkce pro výpočet p-hodnoty MK testu
+get_mk_test <- function(df) {
+  result <- mk.test(df$AT_avgm)  # Provedení MK testu
+  return(result$p.value)  # Vrácení p-hodnoty
+}
+
+# Výpočet MK testu pro každou lokalitu podle státu
+mk_results <- df_yearly %>%
+  group_by(STAT, LOKALITA) %>%
+  summarise(MK_p_value = get_mk_test(cur_data()), .groups = "drop")
+
+# Zobrazení výsledků
+print(mk_results)
+
+install.packages("Kendall")
+library(Kendall)
+#MannKendall(df_yearly)
+
+
+#Filtrace dat pro sloupec AT_avg
+fn_clean <- fn %>% filter(!is.na(AT_avg))
+
+# Aplikace Mann-Kendallova testu na každou lokalitu zvlášť pro AT_avg
+resultsATavg <- fn_clean %>%
+  group_by(LOKALITA) %>%
+  summarise(
+    p_value = mk.test(AT_avg)$p.value,  # P-hodnota testu
+    tau = mk.test(AT_avg)$estimates["tau"],  # Sklon tau
+    trend = ifelse(mk.test(AT_avg)$p.value < 0.05, "Signifikantní", "Nesignifikantní")  # Trend
+  )
+
+# Výsledek
+print(resultsATavg)
